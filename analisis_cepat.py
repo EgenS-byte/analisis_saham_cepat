@@ -6,16 +6,23 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 
 # ---------------------- KONFIGURASI APLIKASI ----------------------
-st.set_page_config(page_title="Pantau 3 Emiten - 30 Menit", layout="wide")
-st.title("📈 Pantauan Sinyal Trading 3 Emiten (Kerangka Waktu 30 Menit)")
+st.set_page_config(page_title="Pantau Sinyal Trading", layout="wide")
+st.title("📈 Pantauan Sinyal Trading (Kerangka Waktu 30 Menit)")
 st.subheader("Sumber Data: Yahoo Finance | Indikator: Harga Rata-rata, MACD, Volume")
 
-# ---------------------- DAFTAR EMITEN YANG DIPANTAU ----------------------
-# Silakan ganti kode saham sesuai yang Anda pantau
+# ---------------------- INPUT KODE SAHAM OLEH PENGGUNA ----------------------
+st.markdown("### ✏️ Masukkan Kode Emiten yang Akan Dipantau")
+st.caption("Contoh: BBRI.JK, BMRI.JK, BBCA.JK — akhiri dengan .JK untuk saham Indonesia")
+
+kode1 = st.text_input("Emiten 1", value="BBRI.JK")
+kode2 = st.text_input("Emiten 2", value="BMRI.JK")
+kode3 = st.text_input("Emiten 3", value="BBCA.JK")
+
+# Susun menjadi daftar
 DAFTAR_EMITEN = {
-    "Emiten 1": "BBRI.JK",
-    "Emiten 2": "BMRI.JK",
-    "Emiten 3": "BBCA.JK"
+    f"Emiten 1 ({kode1})": kode1.strip().upper(),
+    f"Emiten 2 ({kode2})": kode2.strip().upper(),
+    f"Emiten 3 ({kode3})": kode3.strip().upper()
 }
 
 # ---------------------- FUNGSI PENGHITUNG INDIKATOR ----------------------
@@ -36,16 +43,20 @@ def hitung_macd(df, cepat=12, lambat=26, sinyal=9):
 def ambil_data_30menit(kode_saham, hari_histori=5):
     """
     Ambil data 30 menit dari Yahoo Finance
-    Optimal: 5-7 hari histori → ~65-90 batang 30 menit
+    Optimal: 5 hari histori → ±65 batang 30 menit
     """
-    data = yf.download(
-        tickers=kode_saham,
-        period=f"{hari_histori}d",
-        interval="30m",
-        progress=False
-    )
-    data = data.dropna()
-    return data
+    try:
+        data = yf.download(
+            tickers=kode_saham,
+            period=f"{hari_histori}d",
+            interval="30m",
+            progress=False
+        )
+        data = data.dropna()
+        return data
+    except Exception as e:
+        st.error(f"❌ Gagal mengambil data `{kode_saham}`: {str(e)}")
+        return pd.DataFrame()
 
 def berikan_sinyal_terakhir(df):
     """Buat keputusan berdasarkan data terakhir"""
@@ -110,20 +121,27 @@ def simpan_gambar(fig, format_gambar):
     return buffer
 
 # ---------------------- TOMBOL UTAMA ----------------------
+st.markdown("---")
+format_pilihan = st.radio("Format unduhan gambar:", ["PNG", "JPEG"], horizontal=True)
+
 if st.button("🔄 AMBIL DATA & ANALISIS", type="primary"):
     st.info("Mengambil data terbaru dari Yahoo Finance...")
 
-    # Pilihan format gambar
-    format_pilihan = st.radio("Format unduhan gambar:", ["PNG", "JPEG"], horizontal=True)
-
     for nama_emiten, kode in DAFTAR_EMITEN.items():
-        st.markdown(f"---\n### 📊 {nama_emiten} — `{kode}`")
+        st.markdown(f"---\n### 📊 {nama_emiten}")
+
+        # Validasi kode
+        if not kode or "." not in kode:
+            st.warning(f"⚠️ Kode saham `{kode}` tidak valid. Periksa kembali!")
+            continue
 
         # Ambil & proses data
         df = ambil_data_30menit(kode, hari_histori=5)  # ✅ 5 hari = jumlah optimal
-        if len(df) < 30:
-            st.warning(f"Data kurang: hanya ada {len(df)} batang. Tambah hari histori.")
+        if len(df) == 0:
+            st.warning(f"⚠️ Tidak ada data untuk `{kode}`. Periksa kode saham!")
             continue
+        if len(df) < 30:
+            st.warning(f"⚠️ Data terbatas: hanya ada {len(df)} batang.")
 
         df = hitung_harga_rata_rata(df, periode=20)
         df = hitung_macd(df)
@@ -161,12 +179,13 @@ else:
     st.info("Tekan tombol **AMBIL DATA & ANALISIS** di atas untuk mulai mengambil data dan melihat sinyal trading.")
 
 # ---------------------- PENJELASAN ----------------------
-with st.expander("ℹ️ Informasi Pengaturan"):
+with st.expander("ℹ️ Informasi Penggunaan"):
     st.markdown("""
+    - **Cara mengubah saham**: Ketik kode saham langsung di kolom input di atas (contoh: `TLKM.JK`, `ASII.JK`, `ICBP.JK`)
     - **Kerangka waktu**: 30 menit
     - **Data histori**: 5 hari perdagangan terakhir → menghasilkan ±65 batang 30 menit (jumlah optimal untuk perhitungan MACD & SMA)
     - **Indikator**: SMA 20 periode, MACD (12,26,9), Volume
     - **Pembaruan data**: Hanya saat tombol ditekan → mengambil data terbaru dari Yahoo Finance
-    - **Format gambar**: Bisa dipilih PNG atau JPEG sebelum mengunduh
-    - **Kode saham**: Ubah daftar `DAFTAR_EMITEN` di dalam skrip sesuai kode saham yang Anda pantau
+    - **Format gambar**: Bisa dipilih **PNG** atau **JPEG**, lalu tekan tombol unduh
+    - **Format kode**: Akhiri dengan `.JK` untuk saham Indonesia (contoh: `BBRI.JK`)
     """)
