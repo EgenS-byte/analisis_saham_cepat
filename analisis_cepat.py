@@ -1,133 +1,172 @@
 import streamlit as st
-from PIL import Image
-import easyocr
-import re
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from io import BytesIO
 
-# === PENGATURAN HALAMAN ===
-st.set_page_config(page_title="Analisis Saham Cepat", layout="centered")
-st.title("📊 ANALISIS SAHAM OTOMATIS")
-st.subheader("Unggah Screenshot atau Masukkan Angka Manual")
-st.markdown("---")
+# ---------------------- KONFIGURASI APLIKASI ----------------------
+st.set_page_config(page_title="Pantau 3 Emiten - 30 Menit", layout="wide")
+st.title("📈 Pantauan Sinyal Trading 3 Emiten (Kerangka Waktu 30 Menit)")
+st.subheader("Sumber Data: Yahoo Finance | Indikator: Harga Rata-rata, MACD, Volume")
 
-# === MUAT ALAT BACA TEKS ===
-@st.cache_resource
-def inisialisasi_pembaca():
-    # Tambahkan 'numeric' agar lebih baik membaca angka
-    return easyocr.Reader(['en'])  # Bahasa Inggris saja lebih konsisten untuk angka
+# ---------------------- DAFTAR EMITEN YANG DIPANTAU ----------------------
+# Silakan ganti kode saham sesuai yang Anda pantau
+DAFTAR_EMITEN = {
+    "Emiten 1": "BBRI.JK",
+    "Emiten 2": "BMRI.JK",
+    "Emiten 3": "BBCA.JK"
+}
 
-pembaca = inisialisasi_pembaca()
+# ---------------------- FUNGSI PENGHITUNG INDIKATOR ----------------------
+def hitung_harga_rata_rata(df, periode=20):
+    """Hitung Harga Rata-rata / SMA"""
+    df['SMA'] = df['Close'].rolling(window=periode).mean()
+    return df
 
-# === BAGIAN UNGGAH GAMBAR ===
-unggah_gambar = st.file_uploader("📸 Unggah Gambar Indikator (JPG/PNG)", type=["jpg","jpeg","png"])
+def hitung_macd(df, cepat=12, lambat=26, sinyal=9):
+    """Hitung Indikator MACD"""
+    ema_cepat = df['Close'].ewm(span=cepat, adjust=False).mean()
+    ema_lambat = df['Close'].ewm(span=lambat, adjust=False).mean()
+    df['MACD'] = ema_cepat - ema_lambat
+    df['Sinyal'] = df['MACD'].ewm(span=sinyal, adjust=False).mean()
+    df['Histogram'] = df['MACD'] - df['Sinyal']
+    return df
 
-# === VARIABEL DATA ===
-harga = 0.0
-rata = 0.0
-macd = 0.0
-sinyal = 0.0
-histogram = 0.0
-vol_sekarang = 0
-vol_rata = 0
+def ambil_data_30menit(kode_saham, hari_histori=5):
+    """
+    Ambil data 30 menit dari Yahoo Finance
+    Optimal: 5-7 hari histori → ~65-90 batang 30 menit
+    """
+    data = yf.download(
+        tickers=kode_saham,
+        period=f"{hari_histori}d",
+        interval="30m",
+        progress=False
+    )
+    data = data.dropna()
+    return data
 
-# === JIKA ADA GAMBAR DIUNGGAH ===
-if unggah_gambar:
-    gambar = Image.open(unggah_gambar)
-    st.image(gambar, width=380, caption="Gambar yang Diunggah")
-    
-    with st.spinner("🔍 Sedang membaca data..."):
-        # Konversi gambar ke array agar EasyOCR bisa baca
-        import numpy as np
-        gambar_np = np.array(gambar)
-        hasil_baca = pembaca.readtext(gambar_np, detail=0)
-        semua_teks = " ".join(hasil_baca)
-        
-        # Tampilkan teks yang terbaca (untuk pengecekan)
-        with st.expander("🔍 Lihat teks yang terbaca dari gambar"):
-            st.code(semua_teks)
-        
-        # Fungsi ekstraksi angka yang lebih tangguh
-        def ambil_angka(pola, teks):
-            cocok = re.search(pola, teks, re.IGNORECASE)
-            if cocok:
-                try:
-                    return float(cocok.group(1).replace(',', '.'))
-                except:
-                    return 0.0
-            return 0.0
-        
-        # Ekstraksi dengan pola yang lebih fleksibel
-        harga = ambil_angka(r"Harga\D*([\d.,]+)", semua_teks)
-        rata = ambil_angka(r"Rata\D*([\d.,]+)", semua_teks)
-        macd = ambil_angka(r"MACD\D*(-?[\d.,]+)", semua_teks)
-        sinyal = ambil_angka(r"Sinyal\D*(-?[\d.,]+)", semua_teks)
-        histogram = ambil_angka(r"Histogram\D*(-?[\d.,]+)", semua_teks)
-        
-        # Volume: bisa dalam juta atau ribuan
-        vol_sementara = ambil_angka(r"Volume\D*([\d.,]+)", semua_teks)
-        vol_rata_sementara = ambil_angka(r"Vol\s*Rata\D*([\d.,]+)", semua_teks)
-        
-        # Asumsi angka dalam juta (sesuai tampilan Stockbit)
-        vol_sekarang = int(vol_sementara * 1_000_000) if vol_sementara > 0 else 0
-        vol_rata = int(vol_rata_sementara * 1_000_000) if vol_rata_sementara > 0 else 0
-
-# === BAGIAN KOREKSI / INPUT MANUAL ===
-st.markdown("### ✏️ Periksa & Koreksi Angka (jika salah terbaca)")
-col1, col2 = st.columns(2)
-
-with col1:
-    harga = st.number_input("Harga Terakhir", value=harga, step=1.0, format="%.2f")
-    rata = st.number_input("Harga Rata-rata", value=rata, step=1.0, format="%.2f")
-    vol_sekarang = st.number_input("Volume Saat Ini", value=vol_sekarang, step=100_000)
-    vol_rata = st.number_input("Volume Rata-rata", value=vol_rata, step=100_000)
-
-with col2:
-    macd = st.number_input("Nilai MACD", value=macd, step=0.01, format="%.2f")
-    sinyal = st.number_input("Nilai Garis Sinyal", value=sinyal, step=0.01, format="%.2f")
-    histogram = st.number_input("Nilai Histogram", value=histogram, step=0.01, format="%.2f")
-
-st.markdown("---")
-
-# === TOMBOL ANALISA ===
-if st.button("🔍 BERIKAN KEPUTUSAN", type="primary"):
-    keputusan = "⏳ TUNGGU DULU"
+def berikan_sinyal_terakhir(df):
+    """Buat keputusan berdasarkan data terakhir"""
+    terakhir = df.iloc[-1]
+    sinyal = "🔄 TUNGGU"
     alasan = []
 
-    # Aturan analisis
-    jenuh_beli = macd > 2.5
-    jenuh_jual = macd < -2.0
-    sinyal_beli = macd > sinyal and histogram > 0
-    sinyal_jual = macd < sinyal and histogram < 0
-    harga_atas_rata = harga > rata if rata > 0 else False
-    volume_kuat = vol_sekarang > (vol_rata * 1.3) if vol_rata > 0 else False
-
-    # Logika keputusan
-    if jenuh_beli:
-        keputusan = "🔴 JANGAN BELI / SIAP AMBIL UNTUNG"
-        alasan.append(f"MACD {macd:.2f} → Zona Jenuh Beli")
-        if histogram <= 0:
-            alasan.append("Momentum kenaikan sudah mulai habis")
-
-    elif jenuh_jual and histogram > -0.1:
-        keputusan = "🟢 SIAP ANTRI BELI"
-        alasan.append(f"MACD {macd:.2f} → Zona Jenuh Jual")
-        alasan.append("Kekuatan penurunan mulai habis")
-
-    elif sinyal_beli and not jenuh_beli and harga_atas_rata and volume_kuat:
-        keputusan = "🟢 BOLEH DIPERTIMBANGKAN MASUK"
-        alasan.append("MACD di atas garis sinyal + Histogram Positif")
-        alasan.append("Harga di atas rata-rata + Volume mendukung (>130%)")
-
-    elif sinyal_jual:
-        keputusan = "🔴 JANGAN MASUK"
-        alasan.append("MACD turun di bawah garis sinyal")
-
-    else:
-        alasan.append("Belum ada sinyal yang jelas, lebih baik tunggu konfirmasi")
-
-    # Tampilkan Hasil
-    st.success(f"🎯 KEPUTUSAN: {keputusan}")
-    st.subheader("📝 Alasan:")
-    for poin in alasan:
-        st.write(f"✅ {poin}")
+    # Kondisi Beli
+    if (terakhir['MACD'] > terakhir['Sinyal']) and \
+       (terakhir['Close'] > terakhir['SMA']) and \
+       (terakhir['Volume'] > df['Volume'].rolling(20).mean().iloc[-1]):
+        sinyal = "✅ BELI"
+        alasan = ["MACD di atas Garis Sinyal", "Harga di atas Rata-rata", "Volume Meningkat"]
     
-    st.info("💡 Ingat: Selalu pasang Stop Loss ±2-3% dan ambil untung wajar")
+    # Kondisi Jual
+    elif (terakhir['MACD'] < terakhir['Sinyal']) and \
+         (terakhir['Close'] < terakhir['SMA']):
+        sinyal = "❌ JUAL"
+        alasan = ["MACD di bawah Garis Sinyal", "Harga di bawah Rata-rata"]
+    
+    return sinyal, alasan, terakhir
+
+# ---------------------- FUNGSI GRAFIK & SIMPAN GAMBAR ----------------------
+def buat_grafik(df, nama, kode):
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True,
+                                         gridspec_kw={'height_ratios': [3, 2, 1]})
+    
+    # Grafik Harga + SMA
+    ax1.plot(df.index, df['Close'], label='Harga Tutup', color='blue', linewidth=1.5)
+    ax1.plot(df.index, df['SMA'], label='Harga Rata-rata (20)', color='orange', linewidth=1.5)
+    ax1.set_title(f"{nama} ({kode}) | Data 30 Menit", fontsize=14, fontweight='bold')
+    ax1.set_ylabel("Harga")
+    ax1.legend(loc='upper left')
+    ax1.grid(alpha=0.3)
+
+    # Grafik MACD
+    ax2.plot(df.index, df['MACD'], label='MACD', color='green', linewidth=1.5)
+    ax2.plot(df.index, df['Sinyal'], label='Garis Sinyal', color='red', linewidth=1.5)
+    warna_hist = ['green' if h >= 0 else 'red' for h in df['Histogram']]
+    ax2.bar(df.index, df['Histogram'], color=warna_hist, alpha=0.3, width=0.02)
+    ax2.set_ylabel("MACD")
+    ax2.legend(loc='upper left')
+    ax2.grid(alpha=0.3)
+
+    # Grafik Volume
+    ax3.bar(df.index, df['Volume'], label='Volume', color='gray', alpha=0.5, width=0.02)
+    rata_volume = df['Volume'].rolling(20).mean()
+    ax3.plot(df.index, rata_volume, label='Rata-rata Volume', color='purple', linewidth=1.2)
+    ax3.set_ylabel("Volume")
+    ax3.legend(loc='upper left')
+    ax3.grid(alpha=0.3)
+
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    return fig
+
+def simpan_gambar(fig, format_gambar):
+    """Simpan grafik ke dalam memori untuk diunduh"""
+    buffer = BytesIO()
+    fig.savefig(buffer, format=format_gambar.lower(), dpi=150, bbox_inches='tight')
+    buffer.seek(0)
+    return buffer
+
+# ---------------------- TOMBOL UTAMA ----------------------
+if st.button("🔄 AMBIL DATA & ANALISIS", type="primary"):
+    st.info("Mengambil data terbaru dari Yahoo Finance...")
+
+    # Pilihan format gambar
+    format_pilihan = st.radio("Format unduhan gambar:", ["PNG", "JPEG"], horizontal=True)
+
+    for nama_emiten, kode in DAFTAR_EMITEN.items():
+        st.markdown(f"---\n### 📊 {nama_emiten} — `{kode}`")
+
+        # Ambil & proses data
+        df = ambil_data_30menit(kode, hari_histori=5)  # ✅ 5 hari = jumlah optimal
+        if len(df) < 30:
+            st.warning(f"Data kurang: hanya ada {len(df)} batang. Tambah hari histori.")
+            continue
+
+        df = hitung_harga_rata_rata(df, periode=20)
+        df = hitung_macd(df)
+        sinyal, alasan, terakhir = berikan_sinyal_terakhir(df)
+
+        # Tampilkan ringkasan
+        st.subheader(f"Keputusan: {sinyal}")
+        if alasan:
+            for a in alasan:
+                st.write(f"- {a}")
+        st.write(f"Harga Terakhir: **{terakhir['Close']:,.2f}** | "
+                 f"SMA: **{terakhir['SMA']:,.2f}** | "
+                 f"MACD: **{terakhir['MACD']:.4f}** | "
+                 f"Sinyal: **{terakhir['Sinyal']:.4f}**")
+
+        # Tampilkan grafik
+        fig = buat_grafik(df, nama_emiten, kode)
+        st.pyplot(fig)
+
+        # Tombol unduh gambar
+        gambar_buffer = simpan_gambar(fig, format_pilihan)
+        nama_file = f"{kode.replace('.','_')}_grafik.{format_pilihan.lower()}"
+        st.download_button(
+            label=f"📥 Unduh Grafik ({format_pilihan})",
+            data=gambar_buffer,
+            file_name=nama_file,
+            mime=f"image/{format_pilihan.lower()}"
+        )
+
+        plt.close(fig)  # Bersihkan memori
+
+    st.success("✅ Analisis selesai! Data diperbarui dari Yahoo Finance.")
+
+else:
+    st.info("Tekan tombol **AMBIL DATA & ANALISIS** di atas untuk mulai mengambil data dan melihat sinyal trading.")
+
+# ---------------------- PENJELASAN ----------------------
+with st.expander("ℹ️ Informasi Pengaturan"):
+    st.markdown("""
+    - **Kerangka waktu**: 30 menit
+    - **Data histori**: 5 hari perdagangan terakhir → menghasilkan ±65 batang 30 menit (jumlah optimal untuk perhitungan MACD & SMA)
+    - **Indikator**: SMA 20 periode, MACD (12,26,9), Volume
+    - **Pembaruan data**: Hanya saat tombol ditekan → mengambil data terbaru dari Yahoo Finance
+    - **Format gambar**: Bisa dipilih PNG atau JPEG sebelum mengunduh
+    - **Kode saham**: Ubah daftar `DAFTAR_EMITEN` di dalam skrip sesuai kode saham yang Anda pantau
+    """)
