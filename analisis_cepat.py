@@ -7,7 +7,7 @@ from io import BytesIO
 
 # ---------------------- KONFIGURASI ----------------------
 st.set_page_config(page_title="Pantau Sinyal Trading", layout="wide")
-st.title("📈 Pantauan Sinyal Trading (Data 30 Menit)")
+st.title("📈 Trading Today (Data 30 Menit)")
 st.caption("Indikator: SMA · MACD · Volume · RSI | Sumber: Yahoo Finance")
 
 # ---------------------- INPUT KODE SAHAM ----------------------
